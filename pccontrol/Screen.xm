@@ -114,6 +114,15 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
     return _UICreateScreenUIImage();
 }
 
+static Boolean panelIsLandscapeNative(NSString *machine)
+{
+    if (![machine hasPrefix:@"iPad"]) {
+        return false;
+    }
+    int major = [[machine substringFromIndex:4] intValue]; // "iPad11,6" -> 11
+    return major == 8 || major >= 13;
+}
+
 + (CGImageRef)createScreenShotCGImageRef
 {
     Boolean isiPad8orUp = false;
@@ -124,13 +133,14 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
     int height = (int)(screenSize.height * scale);
     int width = (int)(screenSize.width * scale);
 
-    // check whether it is ipad8 or later
-    NSString *searchText = getDeviceName();
-
-    NSRange range = [searchText rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
-    if (range.location != NSNotFound) { // ipad pro (3rd) or later
-        isiPad8orUp = true;
-    }
+    // Does this panel have a landscape-native framebuffer? Only the iPads
+    // without a home button do: iPad Pro 2018 (iPad8,x) and everything from
+    // iPad13,x on. iPad11,x (mini 5, Air 3, 8th gen) and iPad12,x (9th gen)
+    // keep the home button and a portrait framebuffer. The previous regex
+    // "^iPad[8-9]|iPad[1-9][0-9]+" matched those too, so on an iPad 8th gen
+    // the 1620x2160 frame was rendered into a 2160x1620 surface and only a
+    // 1620x1620 square survived.
+    isiPad8orUp = panelIsLandscapeNative(getDeviceName());
 
     if (isiPad8orUp)
     {
