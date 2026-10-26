@@ -383,6 +383,21 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             }
         }
     }
+    else if (taskType == TASK_HARDWARE_KEY)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            performHardwareKeyFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)"0\r\n", writeStreamRef);
+            }
+        }
+    }
     else if (taskType == TASK_UPDATE_CACHE)
     {
         @autoreleasepool{

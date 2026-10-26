@@ -83,6 +83,17 @@ class zxtouch:
 
         return self._recv_exact(content_length)
 
+    def hardware_key(self, usage_page, usage, action="press"):
+        """Send a hardware key event from SpringBoard (Home, Power, ...)
+
+        :param usage_page: HID usage page, e.g. 0x0C (consumer) or 0x07 (keyboard)
+        :param usage: HID usage, e.g. 0x40 (Menu/Home) or 0x30 (Power) on page 0x0C
+        :param action: "press" (down, 80 ms, up), "down" or "up"
+        :return: Result tuple: (success?, error_message/return value)
+        """
+        self.s.send(datahandler.format_socket_data(tasktypes.TASK_HARDWARE_KEY, int(usage_page), int(usage), action))
+        return self._recv_response()
+
     def touch(self, type, finger_index, x, y):
         """Perform a touch event
 

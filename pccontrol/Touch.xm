@@ -327,3 +327,95 @@ void initTouchGetScreenSize()
     device_screen_width = [Screen getScreenWidth];
     device_screen_height = [Screen getScreenHeight];
 }
+
+/*
+Parse one usage field of a hardware key task. Accepts decimal or 0x-prefixed hex.
+Returns false unless the whole field is a number in 0..0xFFFF.
+*/
+static Boolean parseHardwareKeyUsage(NSString *field, uint16_t *out)
+{
+    NSString *trimmed = [field stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    const char *text = [trimmed UTF8String];
+    if (!text || text[0] == '\0' || text[0] == '-')
+        return false;
+
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 0);
+    if (!end || *end != '\0' || value > 0xFFFF)
+        return false;
+
+    *out = (uint16_t)value;
+    return true;
+}
+
+/**
+Build one keyboard event and dispatch it through the same client and sender id as touches
+*/
+static Boolean postHardwareKeyEvent(uint16_t usagePage, uint16_t usage, Boolean down)
+{
+    IOHIDEventRef event = IOHIDEventCreateKeyboardEvent(kCFAllocatorDefault, mach_absolute_time(), usagePage, usage, down, 0);
+    if (!event)
+    {
+        NSLog(@"### com.zjx.springboard: unable to create keyboard event. page: 0x%X, usage: 0x%X", usagePage, usage);
+        return false;
+    }
+    postIOHIDEvent(event);
+    CFRelease(event);
+    return true;
+}
+
+/**
+Perform a hardware key (Home, Power, ...) with data received from socket.
+Format: usage_page;;usage;;action. action is press (down, 80 ms, up), down or up.
+*/
+void performHardwareKeyFromRawData(UInt8 *eventData, NSError **error)
+{
+    NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
+    if ([data count] != 3)
+    {
+        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;The data format should be \"usage_page;;usage;;action\". action is press, down or up. For example, 12;;64;;press for Home.\r\n"}];
+        return;
+    }
+
+    uint16_t usagePage = 0;
+    uint16_t usage = 0;
+    if (!parseHardwareKeyUsage(data[0], &usagePage) || !parseHardwareKeyUsage(data[1], &usage))
+    {
+        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;usage_page and usage should be integers from 0 to 65535 (decimal or 0x hex).\r\n"}];
+        return;
+    }
+
+    NSString *action = [[data[2] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] lowercaseString];
+    if (![action isEqualToString:@"press"] && ![action isEqualToString:@"down"] && ![action isEqualToString:@"up"])
+    {
+        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown action. action should be press, down or up.\r\n"}];
+        return;
+    }
+
+    // postIOHIDEvent drops the event silently when the sender id is unknown. Report it instead.
+    if (senderID == 0)
+    {
+        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Sender id is not set yet. Touch the screen once after a reboot, then retry.\r\n"}];
+        return;
+    }
+
+    Boolean ok = true;
+    if ([action isEqualToString:@"press"])
+    {
+        ok = postHardwareKeyEvent(usagePage, usage, true);
+        if (ok)
+        {
+            usleep(80000);
+            ok = postHardwareKeyEvent(usagePage, usage, false);
+        }
+    }
+    else
+    {
+        ok = postHardwareKeyEvent(usagePage, usage, [action isEqualToString:@"down"]);
+    }
+
+    if (!ok)
+    {
+        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to create the keyboard event.\r\n"}];
+    }
+}

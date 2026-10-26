@@ -39,4 +39,6 @@ void initSenderId();
 
 void initTouchGetScreenSize();
 
+void performHardwareKeyFromRawData(UInt8 *eventData, NSError **error);
+
 #endif
