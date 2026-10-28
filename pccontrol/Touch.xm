@@ -3,6 +3,8 @@
 #include "Screen.h"
 #include "AlertBox.h"
 #include "Task.h"
+#include <sys/sysctl.h>
+#include <sys/time.h>
 
 #define TOUCH_SENDER_ID_PLIST_FILE_NAME @"senderid.plist"
 
@@ -235,6 +237,23 @@ static void postIOHIDEvent(IOHIDEventRef event)
 }
 
 /*
+Wall-clock boot time from the kernel. The original used now - systemUptime,
+but that "boot time" drifts (systemUptime stops while the device sleeps), so
+the cached sender id was refused after a respring on an iPad that had been up
+for days (measured 2026-10-27: 171,936 s of drift), leaving every injected
+touch dropped until a real finger touched the screen.
+*/
+static NSInteger bootTimeSeconds()
+{
+    struct timeval boottime;
+    size_t size = sizeof(boottime);
+    int mib[2] = {CTL_KERN, KERN_BOOTTIME};
+    if (sysctl(mib, 2, &boottime, &size, NULL, 0) == 0 && boottime.tv_sec != 0)
+        return boottime.tv_sec;
+    return (NSInteger)[[NSDate date] timeIntervalSince1970] - (NSInteger)[NSProcessInfo processInfo].systemUptime;
+}
+
+/*
 Get sender id. If the device has not been rebooted, read senderid from file. Otherwise start set sender id callback
 */
 void initSenderId()
@@ -244,8 +263,8 @@ void initSenderId()
     {
         // check start time
         NSInteger currentTime = [[NSDate date] timeIntervalSince1970];
-        NSInteger timeSinceReboot = [NSProcessInfo processInfo].systemUptime;
-        NSInteger thisRebootTime = currentTime - timeSinceReboot;
+        NSInteger thisRebootTime = bootTimeSeconds();
+        NSInteger timeSinceReboot = currentTime - thisRebootTime;
         NSLog(@"com.zjx.springboard: currentTime: %ld, time since reboot: %ld, last reboot time: %ld", currentTime, timeSinceReboot, thisRebootTime);
         
         NSDictionary *data = [NSDictionary dictionaryWithContentsOfFile:plistPath];
@@ -298,9 +317,7 @@ static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef serv
 
 			senderID = IOHIDEventGetSenderID(event);
 
-            NSInteger currentTime = [[NSDate date] timeIntervalSince1970];
-            NSInteger timeSinceReboot = [NSProcessInfo processInfo].systemUptime;
-            NSInteger rebootTime = currentTime - timeSinceReboot;
+            NSInteger rebootTime = bootTimeSeconds();
 
             NSDictionary *dict = @{@"lastReboot":@(rebootTime), @"senderID": @(senderID)};
 

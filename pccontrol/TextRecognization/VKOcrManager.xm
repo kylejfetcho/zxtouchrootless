@@ -75,9 +75,16 @@
             requestHandler = [[VNImageRequestHandler alloc] initWithCIImage:image options:nil];
         }
 
-        request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *request, NSError *error){
-            requestResult = request;
-            errorResult = error;
+        // The handler must not capture self strongly: self owns `request`, the
+        // request owns this block, and a strong self here made a cycle that
+        // kept every manager, and its full-screen CIImage (~14 MB), alive in
+        // SpringBoard until jetsam killed it (measured 2026-10-27).
+        __weak VKOcrManager *weakSelf = self;
+        request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *req, NSError *error){
+            VKOcrManager *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf->requestResult = req;
+            strongSelf->errorResult = error;
         }];
 
         // may cause crash
@@ -121,6 +128,7 @@ Return the string from a area
 
     if (err)
     {
+        inProgress = false;
         NSLog(@"com.zjx.springboard: error happened while performing ocr. %@", err);
         *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Error happened while performing ocr. Error: %@\r\n", err]}];
         return nil;
