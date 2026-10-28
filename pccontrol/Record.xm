@@ -236,6 +236,23 @@ static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef
                 lastEventTimeStampForRecording = CFAbsoluteTimeGetCurrent();
                 print = true;
             }
+            if (print)
+            {
+                // Contact geometry and the event's own mach timestamp, one line per
+                // touch line above. Starts with '#', which no task id does, so the
+                // PC parser and old readers skip it. Fields: finger, major and minor
+                // radius, quality, density, irregularity, pressure, mach time, sender.
+                [scriptRecordingFileHandle writeData:[[NSString stringWithFormat:@"#C %d %.4f %.4f %.4f %.4f %.4f %.4f %llu %llX\n",
+                    index,
+                    IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerMajorRadius),
+                    IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerMinorRadius),
+                    IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerQuality),
+                    IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerDensity),
+                    IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerIrregularity),
+                    IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerPressure),
+                    IOHIDEventGetTimeStamp(event),
+                    IOHIDEventGetSenderID(parentEvent)] dataUsingEncoding:NSUTF8StringEncoding]];
+            }
         }
         /*
 		if (senderID == 0)
