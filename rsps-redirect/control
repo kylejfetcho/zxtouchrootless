@@ -1,8 +1,8 @@
 Package: com.kylef.rspsredirect
 Name: RSPSRedirect
-Version: 0.1.2
+Version: 0.2.0
 Architecture: iphoneos-arm64
-Description: Points the OSRS app at a private server, only while its prefs say Enabled.
+Description: Points the Age of Ash copy of the OSRS app at a private server; leaves the stock app alone.
 Maintainer: kylef
 Author: kylef
 Section: Tweaks

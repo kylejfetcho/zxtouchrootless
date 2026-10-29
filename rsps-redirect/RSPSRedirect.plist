@@ -1,1 +1,1 @@
-{ Filter = { Bundles = ( "com.jagex.oldschool" ); }; }
+{ Filter = { Bundles = ( "com.jagex.oldschool", "com.kylef.ageofash" ); }; }

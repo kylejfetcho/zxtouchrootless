@@ -1,10 +1,15 @@
-// RSPSRedirect: point the official OSRS app (com.jagex.oldschool) at Kyle's own server.
+// RSPSRedirect: point a clone of the OSRS app at Kyle's own server, and only the clone.
 //
-// Inert unless /var/jb/var/mobile/Library/Preferences/com.kylef.rspsredirect.plist has
-// Enabled = true. Kyle plays real OSRS and records touch traces in this same app, so off
-// must mean untouched: no patch, no hook, nothing but one plist read at launch.
+// Two apps, two jobs:
+//   - com.kylef.ageofash ("Age of Ash"), a re-signed copy of the OSRS app, is always
+//     redirected unless the prefs set CloneDisabled.
+//   - com.jagex.oldschool, the stock app Kyle plays real OSRS and records traces in, is never
+//     redirected. Its only job here is to write out its one FairPlay-encrypted page (4 KB,
+//     decrypted in memory) when the prefs set DumpPage, so the clone can be built. Once the
+//     clone exists, the stock app comes out of the filter plist.
+// Prefs: /var/jb/var/mobile/Library/Preferences/com.kylef.rspsredirect.plist
 //
-// When enabled it rewrites three C strings in the app's __TEXT,__cstring, in memory only
+// When redirecting it rewrites three C strings in the app's __TEXT,__cstring, in memory only
 // (MSHookMemory, ElleKit), the same three things RuneLite gets patched for on the PC:
 //   - the 1024-bit RSA modulus (hex), replaced by the server's, same length;
 //   - the jav_config URL and the world list (slr.ws) URL, replaced by local ones, which
@@ -17,6 +22,7 @@
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
+#include <mach-o/loader.h>
 #include <string.h>
 
 #define PREFS "/var/jb/var/mobile/Library/Preferences/com.kylef.rspsredirect.plist"
@@ -79,13 +85,56 @@ static int patch_modulus(hook_memory_t hook, char *sect, unsigned long size, con
 	return n;
 }
 
+// Find osclient by name: at tweak load, image 0 was not the app (its __cstring held 2249
+// bytes, against osclient's 683 KB), 2026-10-29.
+static const struct mach_header_64 *find_osclient(void) {
+	for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+		const char *name = _dyld_get_image_name(i);
+		size_t n = name ? strlen(name) : 0;
+		if (n >= 9 && strcmp(name + n - 9, "/osclient") == 0) {
+			rlog("osclient is image %u", i);
+			return (const struct mach_header_64 *)_dyld_get_image_header(i);
+		}
+	}
+	rlog("osclient image not found");
+	return NULL;
+}
+
+// Write the FairPlay range, which the kernel has decrypted in memory by now, to tmp.
+static void dump_crypt_page(const struct mach_header_64 *mh) {
+	const struct load_command *lc = (const struct load_command *)(mh + 1);
+	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const struct load_command *)((const char *)lc + lc->cmdsize)) {
+		if (lc->cmd != LC_ENCRYPTION_INFO_64) continue;
+		const struct encryption_info_command_64 *e = (const struct encryption_info_command_64 *)lc;
+		NSString *out = [NSTemporaryDirectory() stringByAppendingPathComponent:@"osclient_crypt_page.bin"];
+		FILE *f = fopen(out.fileSystemRepresentation, "wb");
+		if (!f) {
+			rlog("dump: cannot write %s", out.UTF8String);
+			return;
+		}
+		fwrite((const char *)mh + e->cryptoff, 1, e->cryptsize, f);
+		fclose(f);
+		rlog("dump: cryptoff %u cryptsize %u cryptid %u -> %s", e->cryptoff, e->cryptsize, e->cryptid, out.UTF8String);
+		return;
+	}
+	rlog("dump: no LC_ENCRYPTION_INFO_64");
+}
+
 %ctor {
 	NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@PREFS];
-	if (![prefs[@"Enabled"] boolValue]) return;  // off: touch nothing
+	NSString *bundle = [NSBundle mainBundle].bundleIdentifier;
+	BOOL stock = [bundle isEqualToString:@"com.jagex.oldschool"];
+	if (stock && ![prefs[@"DumpPage"] boolValue]) return;  // the stock app: touch nothing
+	if (!stock && [prefs[@"CloneDisabled"] boolValue]) return;
 
 	NSString *logPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"rsps_redirect.log"];
 	rlog_file = fopen(logPath.fileSystemRepresentation, "a");
-	rlog("--- %s RSPSRedirect enabled", [[NSDate date] description].UTF8String);
+	rlog("--- %s RSPSRedirect in %s", [[NSDate date] description].UTF8String, bundle.UTF8String);
+	if (stock) {
+		const struct mach_header_64 *mh = find_osclient();
+		if (mh) dump_crypt_page(mh);
+		return;  // never redirect the stock app
+	}
 
 	NSString *modulus = prefs[@"Modulus"], *config = prefs[@"ConfigURL"], *worlds = prefs[@"WorldListURL"];
 	if (modulus.length != MODULUS_HEX_LEN || !config || !worlds) {
@@ -101,22 +150,8 @@ static int patch_modulus(hook_memory_t hook, char *sect, unsigned long size, con
 		rlog("MSHookMemory not found (dlopen ellekit: %s): nothing patched", ek ? "ok" : dlerror());
 		return;
 	}
-	// Find osclient by name: at tweak load, image 0 was not the app (its __cstring held 2249
-	// bytes, against osclient's 683 KB), 2026-10-29.
-	const struct mach_header_64 *mh = NULL;
-	for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-		const char *name = _dyld_get_image_name(i);
-		size_t n = name ? strlen(name) : 0;
-		if (n >= 9 && strcmp(name + n - 9, "/osclient") == 0) {
-			mh = (const struct mach_header_64 *)_dyld_get_image_header(i);
-			rlog("osclient is image %u", i);
-			break;
-		}
-	}
-	if (!mh) {
-		rlog("osclient image not found: nothing patched");
-		return;
-	}
+	const struct mach_header_64 *mh = find_osclient();
+	if (!mh) return;
 	unsigned long size = 0;
 	char *sect = (char *)getsectiondata(mh, "__TEXT", "__cstring", &size);
 	if (!sect) {
