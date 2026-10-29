@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest  # macOS arm64 runners queued 15 min and were cancelled, 2026-10-29
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,6 +19,9 @@ jobs:
         with:
           path: ${{ github.workspace }}/theos
           key: roothide-theos-${{ runner.os }}-v3
+
+      - name: Theos build dependencies
+        run: sudo apt-get update -q && sudo apt-get install -y -q build-essential fakeroot rsync curl perl zip git libxml2
 
       - name: Install roothide Theos
         if: steps.cache-theos.outputs.cache-hit != 'true'
