@@ -16,10 +16,15 @@
 //     must be no longer than the originals (the rest is NUL-filled).
 // The file on disk, its signature and its FairPlay page are never touched.
 //
-// Log: <app container>/tmp/rsps_redirect.log
+// In the clone it also turns the app's exception-port calls into no-ops: the kernel killed the
+// ad hoc signed clone with EXC_GUARD SET_EXCEPTION_BEHAVIOR when its crash reporter called
+// task_swap_exception_ports (osclient+0x23bf68), 2026-10-29. The stock app is never hooked.
+//
+// Log: <app container>/tmp/rsps_redirect.log, and every line also goes to NSLog ("RSPSRedirect:").
 
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
+#include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
@@ -33,17 +38,38 @@
 static FILE *rlog_file;
 
 static void rlog(const char *fmt, ...) {
+	char line[512];
 	va_list ap;
 	va_start(ap, fmt);
+	vsnprintf(line, sizeof line, fmt, ap);
+	va_end(ap);
+	NSLog(@"RSPSRedirect: %s", line);
 	if (rlog_file) {
-		vfprintf(rlog_file, fmt, ap);
-		fputc('\n', rlog_file);
+		fprintf(rlog_file, "%s\n", line);
 		fflush(rlog_file);
 	}
-	va_end(ap);
 }
 
 typedef void (*hook_memory_t)(void *target, const void *data, size_t size);
+typedef void (*hook_function_t)(void *symbol, void *replace, void **result);
+
+static void *orig_set_exception_ports, *orig_swap_exception_ports;
+
+static kern_return_t fake_set_exception_ports(task_t task, exception_mask_t mask, mach_port_t port,
+                                              exception_behavior_t behavior, thread_state_flavor_t flavor) {
+	rlog("task_set_exception_ports(mask 0x%x, behavior 0x%x): skipped", mask, behavior);
+	return KERN_SUCCESS;
+}
+
+static kern_return_t fake_swap_exception_ports(task_t task, exception_mask_t mask, mach_port_t port,
+                                               exception_behavior_t behavior, thread_state_flavor_t flavor,
+                                               exception_mask_array_t masks, mach_msg_type_number_t *count,
+                                               exception_handler_array_t ports, exception_behavior_array_t behaviors,
+                                               exception_flavor_array_t flavors) {
+	rlog("task_swap_exception_ports(mask 0x%x, behavior 0x%x): skipped", mask, behavior);
+	if (count) *count = 0;  // no previous handlers to hand back
+	return KERN_SUCCESS;
+}
 
 // Replace every occurrence of `from` (a whole NUL-terminated string) in the section with `to`,
 // NUL-padded to from's length. Returns the number replaced.
@@ -136,15 +162,24 @@ static void dump_crypt_page(const struct mach_header_64 *mh) {
 		return;  // never redirect the stock app
 	}
 
+	// The tweak loader does not bring ElleKit into the process unless a tweak links it, so open
+	// it here; RTLD_DEFAULT alone found nothing on 2026-10-29.
+	void *ek = dlopen("/var/jb/usr/lib/libellekit.dylib", RTLD_NOW);
+	hook_function_t hook_fn = (hook_function_t)(ek ? dlsym(ek, "MSHookFunction") : dlsym(RTLD_DEFAULT, "MSHookFunction"));
+	if (hook_fn) {
+		hook_fn((void *)task_set_exception_ports, (void *)fake_set_exception_ports, &orig_set_exception_ports);
+		hook_fn((void *)task_swap_exception_ports, (void *)fake_swap_exception_ports, &orig_swap_exception_ports);
+		rlog("exception-port calls hooked");
+	} else {
+		rlog("MSHookFunction not found (dlopen ellekit: %s): exception ports not hooked", ek ? "ok" : dlerror());
+	}
+
 	NSString *modulus = prefs[@"Modulus"], *config = prefs[@"ConfigURL"], *worlds = prefs[@"WorldListURL"];
 	if (modulus.length != MODULUS_HEX_LEN || !config || !worlds) {
 		rlog("prefs incomplete (Modulus %lu chars, ConfigURL %s, WorldListURL %s): nothing patched",
 		     (unsigned long)modulus.length, config ? "set" : "missing", worlds ? "set" : "missing");
 		return;
 	}
-	// The tweak loader does not bring ElleKit into the process unless a tweak links it, so open
-	// it here; RTLD_DEFAULT alone found nothing on 2026-10-29.
-	void *ek = dlopen("/var/jb/usr/lib/libellekit.dylib", RTLD_NOW);
 	hook_memory_t hook = (hook_memory_t)(ek ? dlsym(ek, "MSHookMemory") : dlsym(RTLD_DEFAULT, "MSHookMemory"));
 	if (!hook) {
 		rlog("MSHookMemory not found (dlopen ellekit: %s): nothing patched", ek ? "ok" : dlerror());
