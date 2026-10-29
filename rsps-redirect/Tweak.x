@@ -93,9 +93,12 @@ static int patch_modulus(hook_memory_t hook, char *sect, unsigned long size, con
 		     (unsigned long)modulus.length, config ? "set" : "missing", worlds ? "set" : "missing");
 		return;
 	}
-	hook_memory_t hook = (hook_memory_t)dlsym(RTLD_DEFAULT, "MSHookMemory");
+	// The tweak loader does not bring ElleKit into the process unless a tweak links it, so open
+	// it here; RTLD_DEFAULT alone found nothing on 2026-10-29.
+	void *ek = dlopen("/var/jb/usr/lib/libellekit.dylib", RTLD_NOW);
+	hook_memory_t hook = (hook_memory_t)(ek ? dlsym(ek, "MSHookMemory") : dlsym(RTLD_DEFAULT, "MSHookMemory"));
 	if (!hook) {
-		rlog("MSHookMemory not found: is ElleKit loaded? nothing patched");
+		rlog("MSHookMemory not found (dlopen ellekit: %s): nothing patched", ek ? "ok" : dlerror());
 		return;
 	}
 	const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
