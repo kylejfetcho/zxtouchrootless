@@ -1,6 +1,6 @@
 Package: com.kylef.rspsredirect
 Name: RSPSRedirect
-Version: 0.1.1
+Version: 0.1.2
 Architecture: iphoneos-arm64
 Description: Points the OSRS app at a private server, only while its prefs say Enabled.
 Maintainer: kylef

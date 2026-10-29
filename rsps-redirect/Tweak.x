@@ -101,7 +101,22 @@ static int patch_modulus(hook_memory_t hook, char *sect, unsigned long size, con
 		rlog("MSHookMemory not found (dlopen ellekit: %s): nothing patched", ek ? "ok" : dlerror());
 		return;
 	}
-	const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
+	// Find osclient by name: at tweak load, image 0 was not the app (its __cstring held 2249
+	// bytes, against osclient's 683 KB), 2026-10-29.
+	const struct mach_header_64 *mh = NULL;
+	for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+		const char *name = _dyld_get_image_name(i);
+		size_t n = name ? strlen(name) : 0;
+		if (n >= 9 && strcmp(name + n - 9, "/osclient") == 0) {
+			mh = (const struct mach_header_64 *)_dyld_get_image_header(i);
+			rlog("osclient is image %u", i);
+			break;
+		}
+	}
+	if (!mh) {
+		rlog("osclient image not found: nothing patched");
+		return;
+	}
 	unsigned long size = 0;
 	char *sect = (char *)getsectiondata(mh, "__TEXT", "__cstring", &size);
 	if (!sect) {
