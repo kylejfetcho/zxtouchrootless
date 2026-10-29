@@ -1,0 +1,41 @@
+name: Build RSPSRedirect
+
+on:
+  push:
+    branches: [ rsps-redirect ]
+    paths: [ 'rsps-redirect/**', '.github/workflows/rsps-redirect.yml' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache roothide Theos
+        id: cache-theos
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/theos
+          key: roothide-theos-${{ runner.os }}-v3
+
+      - name: Install roothide Theos
+        if: steps.cache-theos.outputs.cache-hit != 'true'
+        run: bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build rootless .deb
+        working-directory: rsps-redirect
+        run: make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSPSRedirect-rootless-deb
+          path: rsps-redirect/packages/*.deb
+          if-no-files-found: error
